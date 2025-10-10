@@ -3,6 +3,9 @@ name: Build OpenAir Applications
 # This workflow builds OpenAir applications using the standard Zephyr development
 # environment setup (Option 1 from the OpenAir installation guide).
 # It installs the Zephyr SDK and uses west to build applications with sysbuild.
+#
+# The workflow automatically discovers all applications and samples with a sample.yaml
+# file and builds all test configurations defined in those files using a matrix strategy.
 
 on:
   pull_request:
@@ -14,8 +17,58 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  discover-applications:
     runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PyYAML
+        run: pip3 install --user PyYAML
+
+      - name: Discover applications and tests
+        id: set-matrix
+        run: |
+          python3 << 'EOF'
+          import os
+          import yaml
+          import json
+
+          # Find all sample.yaml files
+          applications = []
+          for root, dirs, files in os.walk('.'):
+              if 'sample.yaml' in files:
+                  sample_path = os.path.join(root, 'sample.yaml')
+                  app_dir = root[2:]  # Remove leading './'
+
+                  # Parse the sample.yaml file
+                  with open(sample_path, 'r') as f:
+                      try:
+                          data = yaml.safe_load(f)
+                          if data and 'tests' in data:
+                              for test_name in data['tests'].keys():
+                                  applications.append({
+                                      'app_dir': app_dir,
+                                      'test_name': test_name
+                                  })
+                      except Exception as e:
+                          print(f"Warning: Failed to parse {sample_path}: {e}")
+
+          # Output the matrix
+          matrix = {'include': applications}
+          print(f"Found {len(applications)} test configurations")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"matrix={json.dumps(matrix)}\n")
+          EOF
+
+  build:
+    needs: discover-applications
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-applications.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
@@ -80,15 +133,29 @@ jobs:
           pip3 install --user -r ${{ github.workspace }}/zephyr/scripts/requirements.txt
           pip3 install --user -r ${{ github.workspace }}/openair/scripts/requirements.txt
 
-      - name: Build hello_world sample
+      - name: Build ${{ matrix.test_name }}
         run: |
           cd ${{ github.workspace }}
-          west build -p always -b ATMEVK-3330e-QN-7//ns openair/samples/sysbuild/hello_world --sysbuild -T samples.sysbuild.hello_world.atm
+          west build -p always -b ATMEVK-3330e-QN-7//ns openair/${{ matrix.app_dir }} --sysbuild -T ${{ matrix.test_name }}
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.test_name }}
+          path: |
+            ${{ github.workspace }}/build/**/*.hex
+            ${{ github.workspace }}/build/**/*.bin
+            ${{ github.workspace }}/build/**/*.elf
+          retention-days: 7
 
       - name: Build summary
         if: always()
         run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Summary: ${{ matrix.test_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Application:** \`${{ matrix.app_dir }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Test:** \`${{ matrix.test_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ -d "${{ github.workspace }}/build" ]; then
             echo "✅ Build completed successfully" >> $GITHUB_STEP_SUMMARY
