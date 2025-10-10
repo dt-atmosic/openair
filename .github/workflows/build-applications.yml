@@ -124,6 +124,10 @@ jobs:
       - name: Initialize West workspace
         run: |
           cd ${{ github.workspace }}
+          # If .west directory exists from cache, remove it to reinitialize
+          if [ -d .west ]; then
+            rm -rf .west
+          fi
           west init -l openair
           west update
           west zephyr-export
