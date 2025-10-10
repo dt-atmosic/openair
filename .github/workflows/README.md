@@ -15,16 +15,20 @@ The workflow automatically discovers all test configurations to build:
 1. **Searches for test definition files**: Finds all `sample.yaml` and `testcase.yaml` files in the repository
 2. **Parses test configurations**: Extracts test names from the `tests:` section of each file
 3. **Filters for ATM tests**: Only includes tests with names ending in `.atm`
-4. **Builds in parallel**: Uses a GitHub Actions matrix to build all discovered tests concurrently
+4. **Creates matrix for multiple boards**: Builds each test on all configured boards
+5. **Builds in parallel**: Uses a GitHub Actions matrix to build all discovered tests concurrently
 
-This means you don't need to manually update the workflow when adding new applications or tests - just add a `sample.yaml` or `testcase.yaml` file with test names ending in `.atm` and they'll be automatically built.
+This means you don't need to manually update the workflow when adding new applications or tests - just add a `sample.yaml` or `testcase.yaml` file with test names ending in `.atm` and they'll be automatically built on all boards.
 
 ### Current Configuration
 
 - **Runner**: Ubuntu 22.04
-- **Board**: ATMEVK-3330e-QN-7//ns (ATM33 series)
+- **Boards**:
+  - `ATMEVK-3330e-QN-7//ns` (ATM33 series)
+  - `ATMEVK-3430e-YQN-5//ns` (ATM34 series)
 - **Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
 - **Test Filter**: Only tests ending with `.atm`
+- **Build Options**: Creates `.atm` programming archives with `-DSB_CONFIG_ATM_ARCH_ERASE_ALL=y`
 
 ### Workflow Triggers
 
@@ -45,19 +49,21 @@ This job runs first and discovers all test configurations:
    - Find `sample.yaml` and `testcase.yaml` files
    - Parse the `tests:` section from each file
    - Filter for test names ending with `.atm`
-   - Output a JSON matrix of all discovered tests
+   - Create matrix entries for each test × board combination
+   - Output a JSON matrix of all discovered test/board combinations
 
 #### 2. Build Job (`build`)
 
-This job runs in parallel for each discovered test configuration:
+This job runs in parallel for each discovered test/board combination:
 
 1. **System Dependencies**: Installs required Ubuntu packages for Zephyr development
 2. **Python Environment**: Sets up Python and installs `west` build tool
 3. **Zephyr SDK**: Downloads and installs Zephyr SDK 0.16.8 with ARM toolchain (cached)
 4. **West Workspace**: Initializes the west workspace and fetches dependencies (cached)
 5. **Python Dependencies**: Installs required Python packages
-6. **Build**: Builds the specific test configuration using west with sysbuild
-7. **Upload Artifacts**: Uploads build artifacts (hex, bin, elf files)
+6. **Build**: Builds the specific test configuration on the specific board using west with sysbuild
+   - Includes `-DSB_CONFIG_ATM_ARCH_ERASE_ALL=y` to create `.atm` programming archives
+7. **Upload Artifacts**: Uploads build artifacts (hex, bin, elf, and atm files)
 8. **Summary**: Generates a build summary with artifact information
 
 ### Caching
@@ -195,21 +201,23 @@ Refer to the `sample.yaml` or `testcase.yaml` file in each application directory
 The workflow currently includes:
 
 1. ✅ **Automatic Test Discovery**: Discovers all tests from `sample.yaml` and `testcase.yaml` files
-2. ✅ **Matrix Builds**: Builds multiple applications and tests in parallel
-3. ✅ **Artifact Upload**: Uploads build artifacts (hex, bin, elf files) for download
-4. ✅ **Build Summaries**: Generates per-test build summaries with artifact information
-5. ✅ **Caching**: Caches SDK and west modules for faster builds
-6. ✅ **Fail-Fast Disabled**: Continues building other tests even if one fails
+2. ✅ **Multi-Board Support**: Builds tests on multiple board variants (ATM33 and ATM34)
+3. ✅ **Matrix Builds**: Builds multiple applications and tests in parallel
+4. ✅ **Programming Archives**: Creates `.atm` programming archives for easy device programming
+5. ✅ **Artifact Upload**: Uploads build artifacts (hex, bin, elf, atm files) for download
+6. ✅ **Build Summaries**: Generates per-test build summaries with artifact information
+7. ✅ **Caching**: Caches SDK and west modules for faster builds
+8. ✅ **Fail-Fast Disabled**: Continues building other tests even if one fails
 
 ### Future Enhancements
 
 Potential improvements to consider:
 
-1. **Multi-Board Support**: Build tests on multiple board variants
-2. **Selective Building**: Only build applications affected by PR changes
-3. **Build Time Tracking**: Report and track build times across runs
-4. **Binary Size Comparison**: Compare binary sizes across builds
-5. **Scheduled Builds**: Add nightly builds for comprehensive testing
-6. **Status Badges**: Add build status badges to README
-7. **Test Execution**: Run tests on hardware or in simulation
+1. **Selective Building**: Only build applications affected by PR changes
+2. **Build Time Tracking**: Report and track build times across runs
+3. **Binary Size Comparison**: Compare binary sizes across builds
+4. **Scheduled Builds**: Add nightly builds for comprehensive testing
+5. **Status Badges**: Add build status badges to README
+6. **Test Execution**: Run tests on hardware or in simulation
+7. **Additional Boards**: Add more board variants as needed
 
