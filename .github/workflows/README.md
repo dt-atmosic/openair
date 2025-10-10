@@ -4,9 +4,7 @@ This directory contains GitHub Actions workflows for building and testing OpenAi
 
 ## Build Applications Workflow
 
-The `build-applications.yml` workflow automatically discovers and builds OpenAir applications and samples using `west build --sysbuild`.
-
-This workflow follows **Option 1** from the [OpenAir installation guide](https://atmosic.com/public/OpenAir_SDK_doc/getting_started_guide/installation.html) - using the standard Zephyr development environment setup with the Zephyr SDK.
+The `build-applications.yml` workflow automatically discovers and builds OpenAir applications and samples using `west build --sysbuild`, creating `.atm` programming archives and publishing them as GitHub releases.
 
 ### Automatic Test Discovery
 
@@ -14,21 +12,21 @@ The workflow automatically discovers all test configurations to build:
 
 1. **Searches for test definition files**: Finds all `sample.yaml` and `testcase.yaml` files in the repository
 2. **Parses test configurations**: Extracts test names from the `tests:` section of each file
-3. **Filters for ATM tests**: Only includes tests with names ending in `.atm`
-4. **Creates matrix for multiple boards**: Builds each test on all configured boards
+3. **Filters tests by board**: Each board has configurable test name suffixes (e.g., `.atm`)
+4. **Creates matrix for multiple boards**: Builds each matching test on all configured boards
 5. **Builds in parallel**: Uses a GitHub Actions matrix to build all discovered tests concurrently
 
-This means you don't need to manually update the workflow when adding new applications or tests - just add a `sample.yaml` or `testcase.yaml` file with test names ending in `.atm` and they'll be automatically built on all boards.
+This means you don't need to manually update the workflow when adding new applications or tests - just add a `sample.yaml` or `testcase.yaml` file with appropriate test names and they'll be automatically built.
 
 ### Current Configuration
 
 - **Runner**: Ubuntu 22.04
-- **Boards**:
-  - `ATMEVK-3330e-QN-7//ns` (ATM33 series)
-  - `ATMEVK-3430e-YQN-5//ns` (ATM34 series)
+- **Boards** (with test suffixes):
+  - `ATMEVK-3330e-QN-7//ns`: Tests ending with `.atm`
+  - `ATMEVK-3430e-YQN-5//ns`: Tests ending with `.atm`
 - **Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
-- **Test Filter**: Only tests ending with `.atm`
 - **Build Options**: Creates `.atm` programming archives with `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y`
+- **Output**: `.atm` files are uploaded to GitHub releases
 
 ### Workflow Triggers
 
@@ -48,7 +46,7 @@ This job runs first and discovers all test configurations:
    - Walk through all directories
    - Find `sample.yaml` and `testcase.yaml` files
    - Parse the `tests:` section from each file
-   - Filter for test names ending with `.atm`
+   - Filter tests based on board-specific suffixes
    - Create matrix entries for each test × board combination
    - Output a JSON matrix of all discovered test/board combinations
 
@@ -63,8 +61,9 @@ This job runs in parallel for each discovered test/board combination:
 5. **Python Dependencies**: Installs required Python packages
 6. **Build**: Builds the specific test configuration on the specific board using west with sysbuild
    - Includes `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y` to create `.atm` programming archives
-7. **Upload Artifacts**: Uploads build artifacts (hex, bin, elf, and atm files)
-8. **Summary**: Generates a build summary with artifact information
+7. **Find .atm files**: Locates all generated `.atm` programming archives
+8. **Upload to Release**: Uploads `.atm` files to a GitHub release (tagged by PR number or build number)
+9. **Summary**: Generates a build summary with `.atm` file information
 
 ### Caching
 
@@ -73,16 +72,14 @@ The workflow uses GitHub Actions caching to speed up subsequent builds:
 - **Zephyr SDK**: Cached to avoid re-downloading (~500MB)
 - **West Modules**: Cached based on `west.yml` hash to avoid re-fetching dependencies
 
-### Development Environment Setup
+### Release Management
 
-The workflow uses the standard Zephyr development environment setup:
+The workflow automatically creates GitHub releases with `.atm` programming archives:
 
-1. **System Dependencies**: Installs all required packages for Zephyr development on Ubuntu 22.04
-2. **Python & West**: Installs Python pip and the west meta-tool
-3. **Zephyr SDK**: Downloads and installs the official Zephyr SDK with ARM toolchain
-4. **West Workspace**: Initializes the workspace using the OpenAir repository as the manifest
-
-This approach follows the official Zephyr Getting Started Guide and is suitable for CI/CD environments.
+- **For Pull Requests**: Creates a prerelease tagged as `pr-{number}-{run_number}`
+- **For Main Branch**: Creates a release tagged as `build-{run_number}`
+- **File Naming**: Each `.atm` file is named with the pattern `{test_name}-{board}-{filename}.atm`
+- **Automatic Upload**: All `.atm` files from successful builds are uploaded to the release
 
 ### Adding New Tests
 
@@ -92,23 +89,40 @@ To add a new test configuration that will be automatically built:
    - Use `sample.yaml` for samples
    - Use `testcase.yaml` for test cases
 
-2. **Add test configurations** with names ending in `.atm`:
+2. **Add test configurations** with names matching the board suffixes (e.g., ending in `.atm`):
 
 ```yaml
 sample:
   name: My Application
   description: Description of my application
 tests:
-  my_app.test_variant.atm:  # Will be discovered and built
+  my_app.test_variant.atm:  # Will be discovered and built on boards with .atm suffix
     sysbuild: true
     tags: my_tag atm33
     extra_args:
       - SB_CONFIG_SPE=y
-  my_app.other_variant:  # Will NOT be built (doesn't end with .atm)
+  my_app.other_variant:  # Will NOT be built (doesn't match any board suffix)
     sysbuild: true
 ```
 
 3. **Commit and push** - the workflow will automatically discover and build your new test on the next run
+
+### Adding New Boards
+
+To add a new board to the build matrix:
+
+1. Edit `.github/workflows/build-applications.yml`
+2. Add the board to the `boards` dictionary with its test suffixes:
+
+```python
+boards = {
+    'ATMEVK-3330e-QN-7//ns': ['.atm'],
+    'ATMEVK-3430e-YQN-5//ns': ['.atm'],
+    'NEW-BOARD-NAME//ns': ['.atm', '.custom']  # Can have multiple suffixes
+}
+```
+
+3. Commit and push - tests matching the board's suffixes will be built on that board
 
 ### Example Test Definition
 
@@ -135,89 +149,17 @@ tests:
 
 Both test configurations will be automatically discovered and built because they end with `.atm`.
 
-### Available Applications
-
-Based on the repository structure, the following applications can be built:
-
-- `samples/sysbuild/hello_world` - Simple hello world with sysbuild
-- `applications/combo_tag` - FMNA and FMDN Combo Tag
-- `applications/fmna_tag` - Apple Find My Network Tag
-- `applications/fp_tag` - Google Find My Device Network Tag
-- `applications/sensor_beacon` - Sensor Beacon
-- `applications/ss_fmna_tag` - Samsung Apple ComboTag
-- `applications/ras_rreq_initiator` - RAS RREQ Initiator
-- `applications/ras_rrsp_reflector` - RAS RRSP Reflector
-
-### Available Boards
-
-ATM33 series boards (examples):
-- `ATMEVK-3330e-QN-7//ns`
-- `ATMEVK-3330-QN-6//ns`
-- `ATMEVK-3325-QK-6//ns`
-
-ATM34 series boards (examples):
-- `ATMEVK-3405-PQK-5//ns`
-- `ATMEVK-3430e-YQN-5//ns`
-- `ATMBTCSTAG-3405//ns`
-
-See `boards/atmosic/` directory for the complete list of available boards.
-
-### Build Configurations
-
-Each application has multiple test configurations defined in its `sample.yaml` or `testcase.yaml` file:
-
-- Basic builds with SPE (Secure Processing Environment)
-- Builds with MCUboot bootloader
-- Builds with different ATMWSTK configurations
-- Builds with various DFU options
-
-Only test configurations with names ending in `.atm` are automatically built by the CI workflow.
-
-Refer to the `sample.yaml` or `testcase.yaml` file in each application directory for available test configurations.
-
-### Troubleshooting
-
-**Build fails with "board not found":**
-- Verify the board name matches exactly (case-sensitive)
-- Check that the board exists in `boards/atmosic/`
-- Ensure the board variant (//ns, //no_TZ) is correct
-
-**West update fails:**
-- Check network connectivity
-- Verify `west.yml` is valid
-- Clear cache and retry
-
-**Python dependency errors:**
-- Ensure all requirements files are installed
-- Check Python version compatibility (3.10+ recommended)
-
-**SDK installation fails:**
-- Verify SDK download URL is accessible
-- Check available disk space
-- Ensure all system dependencies are installed
-
 ### Current Features
 
 The workflow currently includes:
 
 1. ✅ **Automatic Test Discovery**: Discovers all tests from `sample.yaml` and `testcase.yaml` files
-2. ✅ **Multi-Board Support**: Builds tests on multiple board variants (ATM33 and ATM34)
-3. ✅ **Matrix Builds**: Builds multiple applications and tests in parallel
-4. ✅ **Programming Archives**: Creates `.atm` programming archives for easy device programming
-5. ✅ **Artifact Upload**: Uploads build artifacts (hex, bin, elf, atm files) for download
-6. ✅ **Build Summaries**: Generates per-test build summaries with artifact information
-7. ✅ **Caching**: Caches SDK and west modules for faster builds
-8. ✅ **Fail-Fast Disabled**: Continues building other tests even if one fails
-
-### Future Enhancements
-
-Potential improvements to consider:
-
-1. **Selective Building**: Only build applications affected by PR changes
-2. **Build Time Tracking**: Report and track build times across runs
-3. **Binary Size Comparison**: Compare binary sizes across builds
-4. **Scheduled Builds**: Add nightly builds for comprehensive testing
-5. **Status Badges**: Add build status badges to README
-6. **Test Execution**: Run tests on hardware or in simulation
-7. **Additional Boards**: Add more board variants as needed
+2. ✅ **Configurable Board Filters**: Each board can specify which test name suffixes to build
+3. ✅ **Multi-Board Support**: Builds tests on multiple board variants (ATM33 and ATM34)
+4. ✅ **Matrix Builds**: Builds multiple applications and tests in parallel
+5. ✅ **Programming Archives**: Creates `.atm` programming archives for easy device programming
+6. ✅ **GitHub Releases**: Automatically uploads `.atm` files to GitHub releases
+7. ✅ **Build Summaries**: Generates per-test build summaries with `.atm` file information
+8. ✅ **Caching**: Caches SDK and west modules for faster builds
+9. ✅ **Fail-Fast Disabled**: Continues building other tests even if one fails
 

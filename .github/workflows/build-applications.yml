@@ -37,11 +37,11 @@ jobs:
           import yaml
           import json
 
-          # Define boards to build for
-          boards = [
-              'ATMEVK-3330e-QN-7//ns',
-              'ATMEVK-3430e-YQN-5//ns'
-          ]
+          # Define boards to build for with their test suffixes
+          boards = {
+              'ATMEVK-3330e-QN-7//ns': ['.atm'],
+              'ATMEVK-3430e-YQN-5//ns': ['.atm']
+          }
 
           # Find all sample.yaml and testcase.yaml files
           applications = []
@@ -57,15 +57,16 @@ jobs:
                               data = yaml.safe_load(f)
                               if data and 'tests' in data:
                                   for test_name in data['tests'].keys():
-                                      # Only include tests ending with .atm
-                                      if test_name.endswith('.atm'):
-                                          # Create a matrix entry for each board
-                                          for board in boards:
-                                              applications.append({
-                                                  'app_dir': app_dir,
-                                                  'test_name': test_name,
-                                                  'board': board
-                                              })
+                                      # Create a matrix entry for each board with matching suffix
+                                      for board, suffixes in boards.items():
+                                          for suffix in suffixes:
+                                              if test_name.endswith(suffix):
+                                                  applications.append({
+                                                      'app_dir': app_dir,
+                                                      'test_name': test_name,
+                                                      'board': board
+                                                  })
+                                                  break  # Only add once per board
                           except Exception as e:
                               print(f"Warning: Failed to parse {yaml_path}: {e}")
 
@@ -161,17 +162,58 @@ jobs:
           cd ${{ github.workspace }}
           west build -p always -b ${{ matrix.board }} openair/${{ matrix.app_dir }} --sysbuild -T ${{ matrix.test_name }} -- -DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y
 
-      - name: Upload build artifacts
+      - name: Find .atm files
         if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ matrix.test_name }}-${{ steps.sanitize.outputs.board_safe }}
-          path: |
-            ${{ github.workspace }}/build/**/*.hex
-            ${{ github.workspace }}/build/**/*.bin
-            ${{ github.workspace }}/build/**/*.elf
-            ${{ github.workspace }}/build/**/*.atm
-          retention-days: 7
+        id: find-atm
+        run: |
+          ATM_FILES=$(find ${{ github.workspace }}/build -name "*.atm" -type f)
+          if [ -z "$ATM_FILES" ]; then
+            echo "No .atm files found"
+            echo "has_atm=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found .atm files:"
+            echo "$ATM_FILES"
+            echo "has_atm=true" >> $GITHUB_OUTPUT
+            # Store files as a space-separated list
+            echo "atm_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$ATM_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload .atm files to release
+        if: success() && steps.find-atm.outputs.has_atm == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the release tag from the event or create one based on the run
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            TAG_NAME="pr-${{ github.event.pull_request.number }}-${{ github.run_number }}"
+            RELEASE_NAME="PR #${{ github.event.pull_request.number }} - Build ${{ github.run_number }}"
+            IS_PRERELEASE="true"
+          else
+            TAG_NAME="build-${{ github.run_number }}"
+            RELEASE_NAME="Build ${{ github.run_number }}"
+            IS_PRERELEASE="false"
+          fi
+
+          # Check if release exists, create if not
+          if ! gh release view "$TAG_NAME" > /dev/null 2>&1; then
+            gh release create "$TAG_NAME" \
+              --title "$RELEASE_NAME" \
+              --notes "Automated build from workflow run ${{ github.run_number }}" \
+              --prerelease="$IS_PRERELEASE"
+          fi
+
+          # Upload each .atm file to the release
+          while IFS= read -r atm_file; do
+            if [ -f "$atm_file" ]; then
+              filename=$(basename "$atm_file")
+              # Create a unique name with board and test info
+              new_name="${{ matrix.test_name }}-${{ steps.sanitize.outputs.board_safe }}-${filename}"
+              echo "Uploading $atm_file as $new_name"
+              gh release upload "$TAG_NAME" "$atm_file#$new_name" --clobber
+            fi
+          done <<< "${{ steps.find-atm.outputs.atm_files }}"
 
       - name: Build summary
         if: always()
@@ -185,11 +227,16 @@ jobs:
           if [ -d "${{ github.workspace }}/build" ]; then
             echo "✅ Build completed successfully" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Build artifacts:" >> $GITHUB_STEP_SUMMARY
-            find ${{ github.workspace }}/build -name "*.hex" -o -name "*.bin" -o -name "*.elf" -o -name "*.atm" | while read file; do
-              size=$(du -h "$file" | cut -f1)
-              echo "- $(basename $file) ($size)" >> $GITHUB_STEP_SUMMARY
-            done
+            echo "### Programming archives (.atm files):" >> $GITHUB_STEP_SUMMARY
+            ATM_COUNT=$(find ${{ github.workspace }}/build -name "*.atm" -type f | wc -l)
+            if [ "$ATM_COUNT" -gt 0 ]; then
+              find ${{ github.workspace }}/build -name "*.atm" -type f | while read file; do
+                size=$(du -h "$file" | cut -f1)
+                echo "- $(basename $file) ($size)" >> $GITHUB_STEP_SUMMARY
+              done
+            else
+              echo "- No .atm files generated" >> $GITHUB_STEP_SUMMARY
+            fi
           else
             echo "❌ Build failed" >> $GITHUB_STEP_SUMMARY
           fi
