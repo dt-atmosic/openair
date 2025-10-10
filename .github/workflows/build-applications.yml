@@ -1,0 +1,104 @@
+name: Build OpenAir Applications
+
+# This workflow builds OpenAir applications using the standard Zephyr development
+# environment setup (Option 1 from the OpenAir installation guide).
+# It installs the Zephyr SDK and uses west to build applications with sysbuild.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: openair
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git cmake ninja-build gperf \
+            ccache dfu-util device-tree-compiler wget \
+            python3-dev python3-pip python3-setuptools python3-tk python3-wheel \
+            xz-utils file make gcc gcc-multilib g++-multilib libsdl2-dev \
+            libmagic1
+
+      - name: Set up Python environment
+        run: |
+          python3 -m pip install --user -U pip
+          python3 -m pip install --user west
+
+      - name: Cache Zephyr SDK
+        id: cache-zephyr-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/zephyr-sdk-0.16.8
+          key: ${{ runner.os }}-zephyr-sdk-0.16.8
+
+      - name: Install Zephyr SDK
+        if: steps.cache-zephyr-sdk.outputs.cache-hit != 'true'
+        run: |
+          cd ~
+          # Using Zephyr SDK 0.16.8 which is compatible with Zephyr-based projects
+          wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/zephyr-sdk-0.16.8_linux-x86_64.tar.xz
+          wget -O - https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/sha256.sum | shasum --check --ignore-missing
+          tar xvf zephyr-sdk-0.16.8_linux-x86_64.tar.xz
+          cd zephyr-sdk-0.16.8
+          ./setup.sh -t arm-zephyr-eabi
+
+      - name: Cache West modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/zephyr
+            ${{ github.workspace }}/bootloader
+            ${{ github.workspace }}/modules
+            ${{ github.workspace }}/.west
+          key: ${{ runner.os }}-west-modules-${{ hashFiles('openair/west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-west-modules-
+
+      - name: Initialize West workspace
+        run: |
+          cd ${{ github.workspace }}
+          west init -l openair
+          west update
+          west zephyr-export
+
+      - name: Install Python dependencies
+        run: |
+          pip3 install --user -r ${{ github.workspace }}/zephyr/scripts/requirements.txt
+          pip3 install --user -r ${{ github.workspace }}/openair/scripts/requirements.txt
+
+      - name: Build hello_world sample
+        run: |
+          cd ${{ github.workspace }}
+          west build -p always -b ATMEVK-3330e-QN-7//ns openair/samples/sysbuild/hello_world --sysbuild -T samples.sysbuild.hello_world.atm
+
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -d "${{ github.workspace }}/build" ]; then
+            echo "✅ Build completed successfully" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Build artifacts:" >> $GITHUB_STEP_SUMMARY
+            find ${{ github.workspace }}/build -name "*.hex" -o -name "*.bin" -o -name "*.elf" | while read file; do
+              size=$(du -h "$file" | cut -f1)
+              echo "- $(basename $file) ($size)" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "❌ Build failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
