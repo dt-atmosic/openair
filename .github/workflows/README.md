@@ -28,7 +28,7 @@ This means you don't need to manually update the workflow when adding new applic
   - `ATMEVK-3430e-YQN-5//ns` (ATM34 series)
 - **Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
 - **Test Filter**: Only tests ending with `.atm`
-- **Build Options**: Creates `.atm` programming archives with `-DSB_CONFIG_ATM_ARCH_ERASE_ALL=y`
+- **Build Options**: Creates `.atm` programming archives with `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y`
 
 ### Workflow Triggers
 
@@ -62,7 +62,7 @@ This job runs in parallel for each discovered test/board combination:
 4. **West Workspace**: Initializes the west workspace and fetches dependencies (cached)
 5. **Python Dependencies**: Installs required Python packages
 6. **Build**: Builds the specific test configuration on the specific board using west with sysbuild
-   - Includes `-DSB_CONFIG_ATM_ARCH_ERASE_ALL=y` to create `.atm` programming archives
+   - Includes `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y` to create `.atm` programming archives
 7. **Upload Artifacts**: Uploads build artifacts (hex, bin, elf, and atm files)
 8. **Summary**: Generates a build summary with artifact information
 

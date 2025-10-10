@@ -159,7 +159,7 @@ jobs:
       - name: Build ${{ matrix.test_name }} on ${{ matrix.board }}
         run: |
           cd ${{ github.workspace }}
-          west build -p always -b ${{ matrix.board }} openair/${{ matrix.app_dir }} --sysbuild -T ${{ matrix.test_name }} -- -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y
+          west build -p always -b ${{ matrix.board }} openair/${{ matrix.app_dir }} --sysbuild -T ${{ matrix.test_name }} -- -DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y
 
       - name: Upload build artifacts
         if: success()
