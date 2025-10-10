@@ -4,16 +4,27 @@ This directory contains GitHub Actions workflows for building and testing OpenAi
 
 ## Build Applications Workflow
 
-The `build-applications.yml` workflow builds OpenAir applications across various Atmosic boards using `west build --sysbuild`.
+The `build-applications.yml` workflow automatically discovers and builds OpenAir applications and samples using `west build --sysbuild`.
 
 This workflow follows **Option 1** from the [OpenAir installation guide](https://atmosic.com/public/OpenAir_SDK_doc/getting_started_guide/installation.html) - using the standard Zephyr development environment setup with the Zephyr SDK.
+
+### Automatic Test Discovery
+
+The workflow automatically discovers all test configurations to build:
+
+1. **Searches for test definition files**: Finds all `sample.yaml` and `testcase.yaml` files in the repository
+2. **Parses test configurations**: Extracts test names from the `tests:` section of each file
+3. **Filters for ATM tests**: Only includes tests with names ending in `.atm`
+4. **Builds in parallel**: Uses a GitHub Actions matrix to build all discovered tests concurrently
+
+This means you don't need to manually update the workflow when adding new applications or tests - just add a `sample.yaml` or `testcase.yaml` file with test names ending in `.atm` and they'll be automatically built.
 
 ### Current Configuration
 
 - **Runner**: Ubuntu 22.04
 - **Board**: ATMEVK-3330e-QN-7//ns (ATM33 series)
-- **Application**: samples/sysbuild/hello_world
-- **Build Configuration**: samples.sysbuild.hello_world.atm (with SPE)
+- **Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
+- **Test Filter**: Only tests ending with `.atm`
 
 ### Workflow Triggers
 
@@ -21,15 +32,33 @@ This workflow follows **Option 1** from the [OpenAir installation guide](https:/
 - Pushes to `main` branch
 - Manual workflow dispatch (via GitHub Actions UI)
 
-### Setup Steps
+### Workflow Jobs
+
+#### 1. Discovery Job (`discover-applications`)
+
+This job runs first and discovers all test configurations:
+
+1. **Checkout repository**: Gets the source code
+2. **Install PyYAML**: Installs Python YAML parser
+3. **Discover tests**: Runs Python script to:
+   - Walk through all directories
+   - Find `sample.yaml` and `testcase.yaml` files
+   - Parse the `tests:` section from each file
+   - Filter for test names ending with `.atm`
+   - Output a JSON matrix of all discovered tests
+
+#### 2. Build Job (`build`)
+
+This job runs in parallel for each discovered test configuration:
 
 1. **System Dependencies**: Installs required Ubuntu packages for Zephyr development
 2. **Python Environment**: Sets up Python and installs `west` build tool
-3. **Zephyr SDK**: Downloads and installs Zephyr SDK 0.16.8 with ARM toolchain
-4. **West Workspace**: Initializes the west workspace and fetches dependencies
+3. **Zephyr SDK**: Downloads and installs Zephyr SDK 0.16.8 with ARM toolchain (cached)
+4. **West Workspace**: Initializes the west workspace and fetches dependencies (cached)
 5. **Python Dependencies**: Installs required Python packages
-6. **Build**: Builds the application using west with sysbuild
-7. **Summary**: Generates a build summary with artifact information
+6. **Build**: Builds the specific test configuration using west with sysbuild
+7. **Upload Artifacts**: Uploads build artifacts (hex, bin, elf files)
+8. **Summary**: Generates a build summary with artifact information
 
 ### Caching
 
@@ -49,34 +78,56 @@ The workflow uses the standard Zephyr development environment setup:
 
 This approach follows the official Zephyr Getting Started Guide and is suitable for CI/CD environments.
 
-### Expanding the Build Matrix
+### Adding New Tests
 
-To build multiple applications and boards, you can add a matrix strategy. Example:
+To add a new test configuration that will be automatically built:
+
+1. **Create or update a test definition file** in your application/sample directory:
+   - Use `sample.yaml` for samples
+   - Use `testcase.yaml` for test cases
+
+2. **Add test configurations** with names ending in `.atm`:
 
 ```yaml
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - board: ATMEVK-3330e-QN-7//ns
-            app: samples/sysbuild/hello_world
-            test: samples.sysbuild.hello_world.atm
-          - board: ATMEVK-3405-PQK-5//ns
-            app: applications/fp_tag
-            test: applications.fp_tag.atm
-          # Add more combinations here
+sample:
+  name: My Application
+  description: Description of my application
+tests:
+  my_app.test_variant.atm:  # Will be discovered and built
+    sysbuild: true
+    tags: my_tag atm33
+    extra_args:
+      - SB_CONFIG_SPE=y
+  my_app.other_variant:  # Will NOT be built (doesn't end with .atm)
+    sysbuild: true
 ```
 
-Then update the build step to use matrix variables:
+3. **Commit and push** - the workflow will automatically discover and build your new test on the next run
+
+### Example Test Definition
+
+Here's a complete example of a `sample.yaml` file:
+
 ```yaml
-- name: Build application
-  run: |
-    cd ${{ github.workspace }}
-    west build -p always -b ${{ matrix.board }} openair/${{ matrix.app }} --sysbuild -T ${{ matrix.test }}
+sample:
+  name: Hello World
+  description: Simple hello world application
+common:
+  sysbuild: true
+  tags: introduction
+tests:
+  samples.hello_world.atm:
+    tags: introduction atm33 atm34
+    extra_args:
+      - SB_CONFIG_SPE=y
+  samples.hello_world.atm.mcuboot:
+    tags: introduction atm33 atm34 mcuboot
+    extra_args:
+      - SB_CONFIG_SPE=y
+      - SB_CONFIG_BOOTLOADER_MCUBOOT=y
 ```
+
+Both test configurations will be automatically discovered and built because they end with `.atm`.
 
 ### Available Applications
 
@@ -107,14 +158,16 @@ See `boards/atmosic/` directory for the complete list of available boards.
 
 ### Build Configurations
 
-Each application has multiple test configurations defined in its `sample.yaml` file:
+Each application has multiple test configurations defined in its `sample.yaml` or `testcase.yaml` file:
 
 - Basic builds with SPE (Secure Processing Environment)
 - Builds with MCUboot bootloader
 - Builds with different ATMWSTK configurations
 - Builds with various DFU options
 
-Refer to the `sample.yaml` file in each application directory for available test configurations.
+Only test configurations with names ending in `.atm` are automatically built by the CI workflow.
+
+Refer to the `sample.yaml` or `testcase.yaml` file in each application directory for available test configurations.
 
 ### Troubleshooting
 
@@ -137,15 +190,26 @@ Refer to the `sample.yaml` file in each application directory for available test
 - Check available disk space
 - Ensure all system dependencies are installed
 
+### Current Features
+
+The workflow currently includes:
+
+1. ✅ **Automatic Test Discovery**: Discovers all tests from `sample.yaml` and `testcase.yaml` files
+2. ✅ **Matrix Builds**: Builds multiple applications and tests in parallel
+3. ✅ **Artifact Upload**: Uploads build artifacts (hex, bin, elf files) for download
+4. ✅ **Build Summaries**: Generates per-test build summaries with artifact information
+5. ✅ **Caching**: Caches SDK and west modules for faster builds
+6. ✅ **Fail-Fast Disabled**: Continues building other tests even if one fails
+
 ### Future Enhancements
 
 Potential improvements to consider:
 
-1. **Artifact Upload**: Upload build artifacts (hex, bin, elf files) for download
-2. **Matrix Builds**: Build multiple applications and boards in parallel
-3. **Selective Building**: Only build applications affected by PR changes
-4. **Build Time Tracking**: Report and track build times
-5. **Binary Size Comparison**: Compare binary sizes across builds
-6. **Scheduled Builds**: Add nightly builds for comprehensive testing
-7. **Status Badges**: Add build status badges to README
+1. **Multi-Board Support**: Build tests on multiple board variants
+2. **Selective Building**: Only build applications affected by PR changes
+3. **Build Time Tracking**: Report and track build times across runs
+4. **Binary Size Comparison**: Compare binary sizes across builds
+5. **Scheduled Builds**: Add nightly builds for comprehensive testing
+6. **Status Badges**: Add build status badges to README
+7. **Test Execution**: Run tests on hardware or in simulation
 
