@@ -150,6 +150,12 @@ jobs:
           pip3 install --user -r ${{ github.workspace }}/zephyr/scripts/requirements.txt
           pip3 install --user -r ${{ github.workspace }}/openair/scripts/requirements.txt
 
+      - name: Sanitize board name for artifact
+        id: sanitize
+        run: |
+          BOARD_SAFE=$(echo "${{ matrix.board }}" | tr '/' '-')
+          echo "board_safe=$BOARD_SAFE" >> $GITHUB_OUTPUT
+
       - name: Build ${{ matrix.test_name }} on ${{ matrix.board }}
         run: |
           cd ${{ github.workspace }}
@@ -159,7 +165,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.test_name }}-${{ matrix.board }}
+          name: build-${{ matrix.test_name }}-${{ steps.sanitize.outputs.board_safe }}
           path: |
             ${{ github.workspace }}/build/**/*.hex
             ${{ github.workspace }}/build/**/*.bin
