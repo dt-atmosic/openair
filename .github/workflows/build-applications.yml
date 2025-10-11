@@ -1,0 +1,247 @@
+name: Build OpenAir Applications
+
+# This workflow builds OpenAir applications using the standard Zephyr development
+# environment setup (Option 1 from the OpenAir installation guide).
+# It installs the Zephyr SDK and uses west to build applications with sysbuild.
+#
+# The workflow automatically discovers all applications and samples with a sample.yaml
+# or testcase.yaml file and builds test configurations that end with '.atm' using a
+# matrix strategy.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  discover-applications:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PyYAML
+        run: pip3 install --user PyYAML
+
+      - name: Discover applications and tests
+        id: set-matrix
+        run: |
+          python3 << 'EOF'
+          import os
+          import yaml
+          import json
+
+          # Define boards to build for with their test suffixes
+          boards = {
+              'ATMEVK-3330e-QN-7//ns': ['.atm'],
+              'ATMEVK-3430e-YQN-5//ns': ['.atm']
+          }
+
+          # Find all sample.yaml and testcase.yaml files
+          applications = []
+          for root, dirs, files in os.walk('.'):
+              for yaml_file in ['sample.yaml', 'testcase.yaml']:
+                  if yaml_file in files:
+                      yaml_path = os.path.join(root, yaml_file)
+                      app_dir = root[2:]  # Remove leading './'
+
+                      # Parse the YAML file
+                      with open(yaml_path, 'r') as f:
+                          try:
+                              data = yaml.safe_load(f)
+                              if data and 'tests' in data:
+                                  for test_name in data['tests'].keys():
+                                      # Create a matrix entry for each board with matching suffix
+                                      for board, suffixes in boards.items():
+                                          for suffix in suffixes:
+                                              if test_name.endswith(suffix):
+                                                  applications.append({
+                                                      'app_dir': app_dir,
+                                                      'test_name': test_name,
+                                                      'board': board
+                                                  })
+                                                  break  # Only add once per board
+                          except Exception as e:
+                              print(f"Warning: Failed to parse {yaml_path}: {e}")
+
+          # Output the matrix
+          matrix = {'include': applications}
+          print(f"Found {len(applications)} test configurations (tests x boards)")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"matrix={json.dumps(matrix)}\n")
+          EOF
+
+  build:
+    needs: discover-applications
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-applications.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: openair
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git cmake ninja-build gperf \
+            ccache dfu-util device-tree-compiler wget \
+            python3-dev python3-pip python3-setuptools python3-tk python3-wheel \
+            xz-utils file make gcc gcc-multilib g++-multilib libsdl2-dev \
+            libmagic1
+
+      - name: Set up Python environment
+        run: |
+          python3 -m pip install --user -U pip
+          python3 -m pip install --user west
+
+      - name: Cache Zephyr SDK
+        id: cache-zephyr-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/zephyr-sdk-0.16.8
+          key: ${{ runner.os }}-zephyr-sdk-0.16.8
+
+      - name: Install Zephyr SDK
+        if: steps.cache-zephyr-sdk.outputs.cache-hit != 'true'
+        run: |
+          cd ~
+          # Using Zephyr SDK 0.16.8 which is compatible with Zephyr-based projects
+          wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/zephyr-sdk-0.16.8_linux-x86_64.tar.xz
+          wget -O - https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.8/sha256.sum | shasum --check --ignore-missing
+          tar xvf zephyr-sdk-0.16.8_linux-x86_64.tar.xz
+          cd zephyr-sdk-0.16.8
+          ./setup.sh -t arm-zephyr-eabi
+
+      - name: Cache West modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/zephyr
+            ${{ github.workspace }}/bootloader
+            ${{ github.workspace }}/modules
+            ${{ github.workspace }}/.west
+          key: ${{ runner.os }}-west-modules-${{ hashFiles('openair/west.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-west-modules-
+
+      - name: Initialize West workspace
+        run: |
+          cd ${{ github.workspace }}
+          # If .west directory exists from cache, remove it to reinitialize
+          if [ -d .west ]; then
+            rm -rf .west
+          fi
+          west init -l openair
+          west update
+          west zephyr-export
+
+      - name: Install Python dependencies
+        run: |
+          pip3 install --user -r ${{ github.workspace }}/zephyr/scripts/requirements.txt
+          pip3 install --user -r ${{ github.workspace }}/openair/scripts/requirements.txt
+
+      - name: Sanitize board name for artifact
+        id: sanitize
+        run: |
+          BOARD_SAFE=$(echo "${{ matrix.board }}" | tr '/' '-')
+          echo "board_safe=$BOARD_SAFE" >> $GITHUB_OUTPUT
+
+      - name: Build ${{ matrix.test_name }} on ${{ matrix.board }}
+        run: |
+          cd ${{ github.workspace }}
+          west build -p always -b ${{ matrix.board }} openair/${{ matrix.app_dir }} --sysbuild -T ${{ matrix.test_name }} -- -DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y
+
+      - name: Find .atm files
+        if: success()
+        id: find-atm
+        run: |
+          ATM_FILES=$(find ${{ github.workspace }}/build -name "*.atm" -type f)
+          if [ -z "$ATM_FILES" ]; then
+            echo "No .atm files found"
+            echo "has_atm=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found .atm files:"
+            echo "$ATM_FILES"
+            echo "has_atm=true" >> $GITHUB_OUTPUT
+            # Store files as a space-separated list
+            echo "atm_files<<EOF" >> $GITHUB_OUTPUT
+            echo "$ATM_FILES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload .atm files to release
+        if: success() && steps.find-atm.outputs.has_atm == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the release tag from the event or create one based on the run
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            TAG_NAME="pr-${{ github.event.pull_request.number }}-${{ github.run_number }}"
+            RELEASE_NAME="PR #${{ github.event.pull_request.number }} - Build ${{ github.run_number }}"
+            IS_PRERELEASE="--prerelease"
+          else
+            TAG_NAME="build-${{ github.run_number }}"
+            RELEASE_NAME="Build ${{ github.run_number }}"
+            IS_PRERELEASE=""
+          fi
+
+          # Check if release exists, create if not
+          if ! gh release view "$TAG_NAME" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "Creating release $TAG_NAME"
+            gh release create "$TAG_NAME" \
+              --repo ${{ github.repository }} \
+              --title "$RELEASE_NAME" \
+              --notes "Automated build from workflow run ${{ github.run_number }}<br>Commit: ${{ github.sha }}" \
+              $IS_PRERELEASE \
+              --target ${{ github.sha }}
+          fi
+
+          # Upload each .atm file to the release
+          while IFS= read -r atm_file; do
+            if [ -f "$atm_file" ]; then
+              filename=$(basename "$atm_file")
+              # Create a unique name with board and test info
+              new_name="${{ matrix.test_name }}-${{ steps.sanitize.outputs.board_safe }}-${filename}"
+              echo "Uploading $atm_file as $new_name"
+              gh release upload "$TAG_NAME" "$atm_file#$new_name" --repo ${{ github.repository }} --clobber
+            fi
+          done <<< "${{ steps.find-atm.outputs.atm_files }}"
+
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build Summary: ${{ matrix.test_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Board:** \`${{ matrix.board }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Application:** \`${{ matrix.app_dir }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Test:** \`${{ matrix.test_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -d "${{ github.workspace }}/build" ]; then
+            echo "✅ Build completed successfully" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Programming archives (.atm files):" >> $GITHUB_STEP_SUMMARY
+            ATM_COUNT=$(find ${{ github.workspace }}/build -name "*.atm" -type f | wc -l)
+            if [ "$ATM_COUNT" -gt 0 ]; then
+              find ${{ github.workspace }}/build -name "*.atm" -type f | while read file; do
+                size=$(du -h "$file" | cut -f1)
+                echo "- $(basename $file) ($size)" >> $GITHUB_STEP_SUMMARY
+              done
+            else
+              echo "- No .atm files generated" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "❌ Build failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
