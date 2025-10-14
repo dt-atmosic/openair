@@ -180,10 +180,15 @@ jobs:
           import subprocess
           import json
           import os
+          import glob
 
           builds = ${{ toJson(matrix.builds) }}
           app_dir = '${{ matrix.app_dir }}'
           workspace = '${{ github.workspace }}'
+
+          # Create sanitized app_dir name for the tar file
+          app_dir_safe = app_dir.replace('/', '-')
+          tar_file = os.path.join(workspace, f'{app_dir_safe}.tar')
 
           success_count = 0
           fail_count = 0
@@ -212,8 +217,36 @@ jobs:
                       check=True,
                       capture_output=False
                   )
-                  success_count += 1
-                  print(f"✅ Successfully built {test_name} on {board}")
+
+                  # Find .atm files from this build
+                  build_dir = os.path.join(workspace, 'build')
+                  atm_files = glob.glob(os.path.join(build_dir, '**', '*.atm'), recursive=True)
+
+                  if atm_files:
+                      # Append .atm files to tar archive with renamed paths
+                      board_safe = board.replace('/', '-')
+
+                      for atm_file in atm_files:
+                          basename = os.path.basename(atm_file)
+                          new_name = f"{test_name}-{board_safe}-{basename}"
+
+                          # Use tar to append with transform to rename the file
+                          tar_cmd = [
+                              'tar', '-rf', tar_file,
+                              '--transform', f's|.*|{new_name}|',
+                              '-C', os.path.dirname(atm_file),
+                              basename
+                          ]
+
+                          print(f"  Adding {basename} -> {new_name}")
+                          subprocess.run(tar_cmd, check=True, capture_output=True)
+
+                      success_count += 1
+                      print(f"✅ Successfully built {test_name} on {board} ({len(atm_files)} .atm files)")
+                  else:
+                      print(f"⚠️  Build succeeded but no .atm files found for {test_name} on {board}")
+                      success_count += 1
+
               except subprocess.CalledProcessError as e:
                   fail_count += 1
                   print(f"❌ Failed to build {test_name} on {board}")
@@ -228,28 +261,26 @@ jobs:
               exit(1)
           EOF
 
-      - name: Create archive of .atm files
+      - name: Compress tar archive
         if: success()
         id: create-archive
         run: |
-          # Find all .atm files
-          ATM_FILES=$(find ${{ github.workspace }}/build -name "*.atm" -type f 2>/dev/null || true)
+          # Create a sanitized app_dir name for the archive
+          APP_DIR_SAFE=$(echo "${{ matrix.app_dir }}" | tr '/' '-')
+          TAR_FILE="${{ github.workspace }}/${APP_DIR_SAFE}.tar"
+          ARCHIVE_NAME="${APP_DIR_SAFE}.tar.gz"
 
-          if [ -z "$ATM_FILES" ]; then
-            echo "No .atm files found"
+          # Check if tar file exists and has content
+          if [ ! -f "$TAR_FILE" ]; then
+            echo "No tar file found - no .atm files were generated"
             echo "has_archive=false" >> $GITHUB_OUTPUT
           else
-            echo "Found .atm files:"
-            echo "$ATM_FILES"
+            echo "Compressing tar file..."
+            echo "Contents of tar file:"
+            tar -tvf "$TAR_FILE"
 
-            # Create a sanitized app_dir name for the archive
-            APP_DIR_SAFE=$(echo "${{ matrix.app_dir }}" | tr '/' '-')
-            ARCHIVE_NAME="${APP_DIR_SAFE}.tar.gz"
-
-            # Create archive with all .atm files
-            # Use tar with transform to flatten the directory structure and preserve filenames
-            cd ${{ github.workspace }}/build
-            find . -name "*.atm" -type f -exec tar -czvf "../${ARCHIVE_NAME}" {} +
+            # Compress the tar file
+            gzip "$TAR_FILE"
 
             echo "Created archive: ${ARCHIVE_NAME}"
             echo "has_archive=true" >> $GITHUB_OUTPUT
@@ -306,21 +337,18 @@ jobs:
           echo "**Total builds:** $BUILD_COUNT" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # List all .atm files found
-          ATM_COUNT=$(find ${{ github.workspace }}/build -name "*.atm" -type f 2>/dev/null | wc -l || echo "0")
-          if [ "$ATM_COUNT" -gt 0 ]; then
-            echo "### Generated .atm files ($ATM_COUNT):" >> $GITHUB_STEP_SUMMARY
-            find ${{ github.workspace }}/build -name "*.atm" -type f | while read file; do
-              size=$(du -h "$file" | cut -f1)
-              echo "- $(basename $file) ($size)" >> $GITHUB_STEP_SUMMARY
-            done
+          # Show archive info if it exists
+          if [ "${{ steps.create-archive.outputs.has_archive }}" == "true" ]; then
+            ARCHIVE_PATH="${{ steps.create-archive.outputs.archive_path }}"
+            ARCHIVE_SIZE=$(du -h "$ARCHIVE_PATH" | cut -f1)
+            echo "**Archive:** \`${{ steps.create-archive.outputs.archive_name }}\` ($ARCHIVE_SIZE)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            # Show archive info
-            if [ "${{ steps.create-archive.outputs.has_archive }}" == "true" ]; then
-              ARCHIVE_SIZE=$(du -h "${{ steps.create-archive.outputs.archive_path }}" | cut -f1)
-              echo "**Archive:** \`${{ steps.create-archive.outputs.archive_name }}\` ($ARCHIVE_SIZE)" >> $GITHUB_STEP_SUMMARY
-            fi
+            # List contents of the archive
+            echo "### Archive contents:" >> $GITHUB_STEP_SUMMARY
+            tar -tzf "$ARCHIVE_PATH" | while read file; do
+              echo "- $file" >> $GITHUB_STEP_SUMMARY
+            done
           else
             echo "⚠️ No .atm files generated" >> $GITHUB_STEP_SUMMARY
           fi
