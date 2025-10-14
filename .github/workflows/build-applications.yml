@@ -5,8 +5,9 @@ name: Build OpenAir Applications
 # It installs the Zephyr SDK and uses west to build applications with sysbuild.
 #
 # The workflow automatically discovers all applications and samples with a sample.yaml
-# or testcase.yaml file and builds test configurations that end with '.atm' using a
-# matrix strategy.
+# or testcase.yaml file and builds all test configurations on all configured boards.
+# Builds are grouped by application directory for efficiency, and .atm files are
+# bundled into archives for release.
 
 on:
   pull_request:
