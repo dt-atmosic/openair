@@ -6,15 +6,21 @@ This directory contains GitHub Actions workflows for building and testing OpenAi
 
 The `build-applications.yml` workflow automatically discovers and builds OpenAir applications and samples using `west build --sysbuild`, creating `.atm` programming archives and publishing them as GitHub releases.
 
-### Automatic Test Discovery
+### Automatic Test Discovery and Efficient Building
 
-The workflow automatically discovers all test configurations to build:
+The workflow is designed for efficiency and scalability:
 
-1. **Searches for test definition files**: Finds all `sample.yaml` and `testcase.yaml` files in the repository
-2. **Parses test configurations**: Extracts test names from the `tests:` section of each file
-3. **Filters tests by board**: Each board has configurable test name suffixes (e.g., `.atm`)
-4. **Creates matrix for multiple boards**: Builds each matching test on all configured boards
-5. **Builds in parallel**: Uses a GitHub Actions matrix to build all discovered tests concurrently
+1. **Discovers applications**: Finds all `sample.yaml` and `testcase.yaml` files in the repository
+2. **Groups by application directory**: Creates one job per application directory (`app_dir`)
+3. **Builds all variants**: Each job builds all board/test combinations for that application
+4. **Creates archives**: Bundles all `.atm` files for an application into a single `.tar.gz` archive
+5. **Publishes to releases**: Uploads archives to GitHub releases (avoids 1000-file limit)
+
+**Key benefits:**
+- **Efficient**: Sets up the build environment once per application, then builds all variants
+- **Scalable**: Avoids GitHub's 256 matrix configuration limit by grouping builds
+- **Resilient**: Individual build failures don't stop other builds (fail-fast: false)
+- **Organized**: Archives are named by application directory, containing all board/test variants
 
 This means you don't need to manually update the workflow when adding new applications or tests - just add a `sample.yaml` or `testcase.yaml` file with appropriate test names and they'll be automatically built.
 
@@ -50,32 +56,36 @@ This means you don't need to manually update the workflow when adding new applic
 
 #### 1. Discovery Job (`discover-applications`)
 
-This job runs first and discovers all test configurations:
+This job discovers all applications and their test configurations:
 
 1. **Checkout repository**: Gets the source code
 2. **Install PyYAML**: Installs Python YAML parser
-3. **Discover tests**: Runs Python script to:
+3. **Discover and group**: Runs Python script to:
    - Walk through all directories
    - Find `sample.yaml` and `testcase.yaml` files
    - Parse the `tests:` section from each file
    - Filter tests based on board-specific suffixes
-   - Create matrix entries for each test × board combination
-   - Output a JSON matrix of all discovered test/board combinations
+   - **Group by `app_dir`**: Creates one matrix entry per application directory
+   - Each entry contains all board/test combinations for that application
+4. **Output matrix**: Provides the matrix to the build jobs
 
-#### 2. Build Job (`build`)
+#### 2. Build Jobs (`build`)
 
-This job runs in parallel for each discovered test/board combination:
+One job runs per application directory, building all its variants:
 
 1. **System Dependencies**: Installs required Ubuntu packages for Zephyr development
 2. **Python Environment**: Sets up Python and installs `west` build tool
 3. **Zephyr SDK**: Downloads and installs Zephyr SDK 0.16.8 with ARM toolchain (cached)
 4. **West Workspace**: Initializes the west workspace and fetches dependencies (cached)
 5. **Python Dependencies**: Installs required Python packages
-6. **Build**: Builds the specific test configuration on the specific board using west with sysbuild
+6. **Build all configurations**: Loops through all board/test combinations:
+   - Runs `west build --sysbuild` for each configuration
    - Includes `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y` to create `.atm` programming archives
-7. **Find .atm files**: Locates all generated `.atm` programming archives
-8. **Upload to Release**: Uploads `.atm` files to a GitHub release (tagged by PR number or build number)
-9. **Summary**: Generates a build summary with `.atm` file information
+   - Continues on individual build failures (doesn't stop the job)
+   - Reports success/failure count at the end
+7. **Create archive**: Bundles all `.atm` files into a `.tar.gz` archive named after the `app_dir`
+8. **Upload to Release**: Uploads the archive to GitHub release (tagged by PR number or build number)
+9. **Summary**: Generates a build summary with all generated `.atm` files and archive info
 
 ### Caching
 
@@ -86,12 +96,14 @@ The workflow uses GitHub Actions caching to speed up subsequent builds:
 
 ### Release Management
 
-The workflow automatically creates GitHub releases with `.atm` programming archives:
+The workflow automatically creates GitHub releases with `.atm` programming archive bundles:
 
 - **For Pull Requests**: Creates a prerelease tagged as `pr-{number}-{run_number}`
 - **For Main Branch**: Creates a release tagged as `build-{run_number}`
-- **File Naming**: Each `.atm` file is named with the pattern `{test_name}-{board}-{filename}.atm`
-- **Automatic Upload**: All `.atm` files from successful builds are uploaded to the release
+- **Archive Naming**: Each archive is named `{app_dir}.tar.gz` (with `/` replaced by `-`)
+- **Archive Contents**: Contains all `.atm` files for all board/test combinations of that application
+- **Automatic Upload**: All archives from successful builds are uploaded to the release
+- **Scalability**: Avoids GitHub's 1000-file-per-release limit by bundling files into archives
 
 ### Adding New Tests
 

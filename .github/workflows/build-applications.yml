@@ -55,8 +55,9 @@ jobs:
               'ATMEVK-3405-WQK-5//ns': ['.atm']
           }
 
-          # Find all sample.yaml and testcase.yaml files
-          applications = []
+          # Find all sample.yaml and testcase.yaml files and group by app_dir
+          app_tests = {}  # app_dir -> list of (test_name, board) tuples
+
           for root, dirs, files in os.walk('.'):
               for yaml_file in ['sample.yaml', 'testcase.yaml']:
                   if yaml_file in files:
@@ -69,12 +70,13 @@ jobs:
                               data = yaml.safe_load(f)
                               if data and 'tests' in data:
                                   for test_name in data['tests'].keys():
-                                      # Create a matrix entry for each board with matching suffix
+                                      # Check if test matches any board's suffixes
                                       for board, suffixes in boards.items():
                                           for suffix in suffixes:
                                               if test_name.endswith(suffix):
-                                                  applications.append({
-                                                      'app_dir': app_dir,
+                                                  if app_dir not in app_tests:
+                                                      app_tests[app_dir] = []
+                                                  app_tests[app_dir].append({
                                                       'test_name': test_name,
                                                       'board': board
                                                   })
@@ -82,9 +84,18 @@ jobs:
                           except Exception as e:
                               print(f"Warning: Failed to parse {yaml_path}: {e}")
 
+          # Create matrix entries - one per app_dir with all its test/board combinations
+          applications = []
+          for app_dir, tests in app_tests.items():
+              applications.append({
+                  'app_dir': app_dir,
+                  'builds': tests
+              })
+
           # Output the matrix
           matrix = {'include': applications}
-          print(f"Found {len(applications)} test configurations (tests x boards)")
+          total_builds = sum(len(app['builds']) for app in applications)
+          print(f"Found {len(applications)} applications with {total_builds} total builds")
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"matrix={json.dumps(matrix)}\n")
           EOF
@@ -163,37 +174,91 @@ jobs:
           pip3 install --user -r ${{ github.workspace }}/zephyr/scripts/requirements.txt
           pip3 install --user -r ${{ github.workspace }}/openair/scripts/requirements.txt
 
-      - name: Sanitize board name for artifact
-        id: sanitize
+      - name: Build all configurations for ${{ matrix.app_dir }}
         run: |
-          BOARD_SAFE=$(echo "${{ matrix.board }}" | tr '/' '-')
-          echo "board_safe=$BOARD_SAFE" >> $GITHUB_OUTPUT
+          python3 << 'EOF'
+          import subprocess
+          import json
+          import os
 
-      - name: Build ${{ matrix.test_name }} on ${{ matrix.board }}
-        run: |
-          cd ${{ github.workspace }}
-          west build -p always -b ${{ matrix.board }} openair/${{ matrix.app_dir }} --sysbuild -T ${{ matrix.test_name }} -- -DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y
+          builds = ${{ toJson(matrix.builds) }}
+          app_dir = '${{ matrix.app_dir }}'
+          workspace = '${{ github.workspace }}'
 
-      - name: Find .atm files
+          success_count = 0
+          fail_count = 0
+
+          for build in builds:
+              test_name = build['test_name']
+              board = build['board']
+
+              print(f"\n{'='*80}")
+              print(f"Building {test_name} on {board}")
+              print(f"{'='*80}\n")
+
+              try:
+                  result = subprocess.run(
+                      [
+                          'west', 'build', '-p', 'always',
+                          '-b', board,
+                          f'openair/{app_dir}',
+                          '--sysbuild',
+                          '-T', test_name,
+                          '--',
+                          '-DSB_CONFIG_ATM_ARCH=y',
+                          '-DSB_CONFIG_ATM_ARCH_ERASE_ALL=y'
+                      ],
+                      cwd=workspace,
+                      check=True,
+                      capture_output=False
+                  )
+                  success_count += 1
+                  print(f"✅ Successfully built {test_name} on {board}")
+              except subprocess.CalledProcessError as e:
+                  fail_count += 1
+                  print(f"❌ Failed to build {test_name} on {board}")
+                  # Continue with next build instead of failing
+
+          print(f"\n{'='*80}")
+          print(f"Build Summary: {success_count} succeeded, {fail_count} failed")
+          print(f"{'='*80}\n")
+
+          # Exit with error if all builds failed
+          if success_count == 0 and fail_count > 0:
+              exit(1)
+          EOF
+
+      - name: Create archive of .atm files
         if: success()
-        id: find-atm
+        id: create-archive
         run: |
-          ATM_FILES=$(find ${{ github.workspace }}/build -name "*.atm" -type f)
+          # Find all .atm files
+          ATM_FILES=$(find ${{ github.workspace }}/build -name "*.atm" -type f 2>/dev/null || true)
+
           if [ -z "$ATM_FILES" ]; then
             echo "No .atm files found"
-            echo "has_atm=false" >> $GITHUB_OUTPUT
+            echo "has_archive=false" >> $GITHUB_OUTPUT
           else
             echo "Found .atm files:"
             echo "$ATM_FILES"
-            echo "has_atm=true" >> $GITHUB_OUTPUT
-            # Store files as a space-separated list
-            echo "atm_files<<EOF" >> $GITHUB_OUTPUT
-            echo "$ATM_FILES" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+
+            # Create a sanitized app_dir name for the archive
+            APP_DIR_SAFE=$(echo "${{ matrix.app_dir }}" | tr '/' '-')
+            ARCHIVE_NAME="${APP_DIR_SAFE}.tar.gz"
+
+            # Create archive with all .atm files
+            # Use tar with transform to flatten the directory structure and preserve filenames
+            cd ${{ github.workspace }}/build
+            find . -name "*.atm" -type f -exec tar -czvf "../${ARCHIVE_NAME}" {} +
+
+            echo "Created archive: ${ARCHIVE_NAME}"
+            echo "has_archive=true" >> $GITHUB_OUTPUT
+            echo "archive_name=${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
+            echo "archive_path=${{ github.workspace }}/${ARCHIVE_NAME}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload .atm files to release
-        if: success() && steps.find-atm.outputs.has_atm == 'true'
+      - name: Upload archive to release
+        if: success() && steps.create-archive.outputs.has_archive == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -220,40 +285,43 @@ jobs:
               --target ${{ github.sha }}
           fi
 
-          # Upload each .atm file to the release
-          while IFS= read -r atm_file; do
-            if [ -f "$atm_file" ]; then
-              filename=$(basename "$atm_file")
-              # Create a unique name with board and test info
-              new_name="${{ matrix.test_name }}-${{ steps.sanitize.outputs.board_safe }}-${filename}"
-              echo "Uploading $atm_file as $new_name"
-              gh release upload "$TAG_NAME" "$atm_file#$new_name" --repo ${{ github.repository }} --clobber
-            fi
-          done <<< "${{ steps.find-atm.outputs.atm_files }}"
+          # Upload the archive to the release
+          ARCHIVE_PATH="${{ steps.create-archive.outputs.archive_path }}"
+          ARCHIVE_NAME="${{ steps.create-archive.outputs.archive_name }}"
+
+          echo "Uploading ${ARCHIVE_NAME}"
+          gh release upload "$TAG_NAME" "$ARCHIVE_PATH" --repo ${{ github.repository }} --clobber
 
       - name: Build summary
         if: always()
         run: |
-          echo "## Build Summary: ${{ matrix.test_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Summary: ${{ matrix.app_dir }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Board:** \`${{ matrix.board }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Application:** \`${{ matrix.app_dir }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Test:** \`${{ matrix.test_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -d "${{ github.workspace }}/build" ]; then
-            echo "✅ Build completed successfully" >> $GITHUB_STEP_SUMMARY
+
+          # Count builds
+          BUILDS='${{ toJson(matrix.builds) }}'
+          BUILD_COUNT=$(echo "$BUILDS" | python3 -c "import sys, json; print(len(json.load(sys.stdin)))")
+          echo "**Total builds:** $BUILD_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List all .atm files found
+          ATM_COUNT=$(find ${{ github.workspace }}/build -name "*.atm" -type f 2>/dev/null | wc -l || echo "0")
+          if [ "$ATM_COUNT" -gt 0 ]; then
+            echo "### Generated .atm files ($ATM_COUNT):" >> $GITHUB_STEP_SUMMARY
+            find ${{ github.workspace }}/build -name "*.atm" -type f | while read file; do
+              size=$(du -h "$file" | cut -f1)
+              echo "- $(basename $file) ($size)" >> $GITHUB_STEP_SUMMARY
+            done
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Programming archives (.atm files):" >> $GITHUB_STEP_SUMMARY
-            ATM_COUNT=$(find ${{ github.workspace }}/build -name "*.atm" -type f | wc -l)
-            if [ "$ATM_COUNT" -gt 0 ]; then
-              find ${{ github.workspace }}/build -name "*.atm" -type f | while read file; do
-                size=$(du -h "$file" | cut -f1)
-                echo "- $(basename $file) ($size)" >> $GITHUB_STEP_SUMMARY
-              done
-            else
-              echo "- No .atm files generated" >> $GITHUB_STEP_SUMMARY
+
+            # Show archive info
+            if [ "${{ steps.create-archive.outputs.has_archive }}" == "true" ]; then
+              ARCHIVE_SIZE=$(du -h "${{ steps.create-archive.outputs.archive_path }}" | cut -f1)
+              echo "**Archive:** \`${{ steps.create-archive.outputs.archive_name }}\` ($ARCHIVE_SIZE)" >> $GITHUB_STEP_SUMMARY
             fi
           else
-            echo "❌ Build failed" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ No .atm files generated" >> $GITHUB_STEP_SUMMARY
           fi
 
