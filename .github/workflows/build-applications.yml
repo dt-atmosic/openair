@@ -39,8 +39,20 @@ jobs:
 
           # Define boards to build for with their test suffixes
           boards = {
+              # ATM33 series boards
+              'ATMEVK-3330-QN-6//ns': ['.atm'],
+              'ATMEVK-3330e-QN-6//ns': ['.atm'],
               'ATMEVK-3330e-QN-7//ns': ['.atm'],
-              'ATMEVK-3430e-YQN-5//ns': ['.atm']
+              'ATMEVK-3325-CM-6//ns': ['.atm'],
+              'ATMEVK-3325-QK-6//ns': ['.atm'],
+              'ATMEVK-3325-LQK-6//ns': ['.atm'],
+              # ATM34 series boards
+              'ATMEVK-3405-PQK-5//ns': ['.atm'],
+              'ATMEVK-3425-YQK-5//ns': ['.atm'],
+              'ATMEVK-3430e-YQN-5//ns': ['.atm'],
+              'ATMEVK-3405-YBV-5//ns': ['.atm'],
+              'ATMBTCSTAG-3405//ns': ['.atm'],
+              'ATMEVK-3405-WQK-5//ns': ['.atm']
           }
 
           # Find all sample.yaml and testcase.yaml files

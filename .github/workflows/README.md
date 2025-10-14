@@ -22,8 +22,20 @@ This means you don't need to manually update the workflow when adding new applic
 
 - **Runner**: Ubuntu 22.04
 - **Boards** (with test suffixes):
-  - `ATMEVK-3330e-QN-7//ns`: Tests ending with `.atm`
-  - `ATMEVK-3430e-YQN-5//ns`: Tests ending with `.atm`
+  - **ATM33 series** (6 boards):
+    - `ATMEVK-3330-QN-6//ns`: Tests ending with `.atm`
+    - `ATMEVK-3330e-QN-6//ns`: Tests ending with `.atm`
+    - `ATMEVK-3330e-QN-7//ns`: Tests ending with `.atm`
+    - `ATMEVK-3325-CM-6//ns`: Tests ending with `.atm`
+    - `ATMEVK-3325-QK-6//ns`: Tests ending with `.atm`
+    - `ATMEVK-3325-LQK-6//ns`: Tests ending with `.atm`
+  - **ATM34 series** (6 boards):
+    - `ATMEVK-3405-PQK-5//ns`: Tests ending with `.atm`
+    - `ATMEVK-3425-YQK-5//ns`: Tests ending with `.atm`
+    - `ATMEVK-3430e-YQN-5//ns`: Tests ending with `.atm`
+    - `ATMEVK-3405-YBV-5//ns`: Tests ending with `.atm`
+    - `ATMBTCSTAG-3405//ns`: Tests ending with `.atm`
+    - `ATMEVK-3405-WQK-5//ns`: Tests ending with `.atm`
 - **Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
 - **Build Options**: Creates `.atm` programming archives with `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y`
 - **Output**: `.atm` files are uploaded to GitHub releases
@@ -116,13 +128,17 @@ To add a new board to the build matrix:
 
 ```python
 boards = {
-    'ATMEVK-3330e-QN-7//ns': ['.atm'],
-    'ATMEVK-3430e-YQN-5//ns': ['.atm'],
+    # ATM33 series boards
+    'ATMEVK-3330-QN-6//ns': ['.atm'],
+    'ATMEVK-3330e-QN-6//ns': ['.atm'],
+    # ... other boards ...
     'NEW-BOARD-NAME//ns': ['.atm', '.custom']  # Can have multiple suffixes
 }
 ```
 
 3. Commit and push - tests matching the board's suffixes will be built on that board
+
+**Note**: The current configuration builds all 12 boards (6 ATM33 + 6 ATM34) with the `//ns` variant and `.atm` test suffix.
 
 ### Example Test Definition
 
