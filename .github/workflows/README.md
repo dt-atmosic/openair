@@ -27,24 +27,24 @@ This means you don't need to manually update the workflow when adding new applic
 ### Current Configuration
 
 - **Runner**: Ubuntu 22.04
-- **Boards** (with test suffixes):
+- **Boards** (12 total):
   - **ATM33 series** (6 boards):
-    - `ATMEVK-3330-QN-6//ns`: Tests ending with `.atm`
-    - `ATMEVK-3330e-QN-6//ns`: Tests ending with `.atm`
-    - `ATMEVK-3330e-QN-7//ns`: Tests ending with `.atm`
-    - `ATMEVK-3325-CM-6//ns`: Tests ending with `.atm`
-    - `ATMEVK-3325-QK-6//ns`: Tests ending with `.atm`
-    - `ATMEVK-3325-LQK-6//ns`: Tests ending with `.atm`
+    - `ATMEVK-3330-QN-6//ns`
+    - `ATMEVK-3330e-QN-6//ns`
+    - `ATMEVK-3330e-QN-7//ns`
+    - `ATMEVK-3325-CM-6//ns`
+    - `ATMEVK-3325-QK-6//ns`
+    - `ATMEVK-3325-LQK-6//ns`
   - **ATM34 series** (6 boards):
-    - `ATMEVK-3405-PQK-5//ns`: Tests ending with `.atm`
-    - `ATMEVK-3425-YQK-5//ns`: Tests ending with `.atm`
-    - `ATMEVK-3430e-YQN-5//ns`: Tests ending with `.atm`
-    - `ATMEVK-3405-YBV-5//ns`: Tests ending with `.atm`
-    - `ATMBTCSTAG-3405//ns`: Tests ending with `.atm`
-    - `ATMEVK-3405-WQK-5//ns`: Tests ending with `.atm`
+    - `ATMEVK-3405-PQK-5//ns`
+    - `ATMEVK-3425-YQK-5//ns`
+    - `ATMEVK-3430e-YQN-5//ns`
+    - `ATMEVK-3405-YBV-5//ns`
+    - `ATMBTCSTAG-3405//ns`
+    - `ATMEVK-3405-WQK-5//ns`
 - **Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
 - **Build Options**: Creates `.atm` programming archives with `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y`
-- **Output**: `.atm` files are uploaded to GitHub releases
+- **Output**: Archives of `.atm` files are uploaded to GitHub releases
 
 ### Workflow Triggers
 
@@ -64,7 +64,6 @@ This job discovers all applications and their test configurations:
    - Walk through all directories
    - Find `sample.yaml` and `testcase.yaml` files
    - Parse the `tests:` section from each file
-   - Filter tests based on board-specific suffixes
    - **Group by `app_dir`**: Creates one matrix entry per application directory
    - Each entry contains all board/test combinations for that application
 4. **Output matrix**: Provides the matrix to the build jobs
@@ -113,44 +112,44 @@ To add a new test configuration that will be automatically built:
    - Use `sample.yaml` for samples
    - Use `testcase.yaml` for test cases
 
-2. **Add test configurations** with names matching the board suffixes (e.g., ending in `.atm`):
+2. **Add test configurations**:
 
 ```yaml
 sample:
   name: My Application
   description: Description of my application
 tests:
-  my_app.test_variant.atm:  # Will be discovered and built on boards with .atm suffix
+  my_app.test_variant:
     sysbuild: true
     tags: my_tag atm33
     extra_args:
       - SB_CONFIG_SPE=y
-  my_app.other_variant:  # Will NOT be built (doesn't match any board suffix)
+  my_app.other_variant:
     sysbuild: true
 ```
 
-3. **Commit and push** - the workflow will automatically discover and build your new test on the next run
+3. **Commit and push** - the workflow will automatically discover and build your new tests on all configured boards
 
 ### Adding New Boards
 
 To add a new board to the build matrix:
 
 1. Edit `.github/workflows/build-applications.yml`
-2. Add the board to the `boards` dictionary with its test suffixes:
+2. Add the board to the `boards` list:
 
 ```python
-boards = {
+boards = [
     # ATM33 series boards
-    'ATMEVK-3330-QN-6//ns': ['.atm'],
-    'ATMEVK-3330e-QN-6//ns': ['.atm'],
+    'ATMEVK-3330-QN-6//ns',
+    'ATMEVK-3330e-QN-6//ns',
     # ... other boards ...
-    'NEW-BOARD-NAME//ns': ['.atm', '.custom']  # Can have multiple suffixes
-}
+    'NEW-BOARD-NAME//ns',  # Add your new board here
+]
 ```
 
-3. Commit and push - tests matching the board's suffixes will be built on that board
+3. Commit and push - all discovered tests will be built on the new board
 
-**Note**: The current configuration builds all 12 boards (6 ATM33 + 6 ATM34) with the `//ns` variant and `.atm` test suffix.
+**Note**: The current configuration builds all discovered tests on all 12 boards (6 ATM33 + 6 ATM34) with the `//ns` variant.
 
 ### Example Test Definition
 
@@ -164,30 +163,30 @@ common:
   sysbuild: true
   tags: introduction
 tests:
-  samples.hello_world.atm:
+  samples.hello_world:
     tags: introduction atm33 atm34
     extra_args:
       - SB_CONFIG_SPE=y
-  samples.hello_world.atm.mcuboot:
+  samples.hello_world.mcuboot:
     tags: introduction atm33 atm34 mcuboot
     extra_args:
       - SB_CONFIG_SPE=y
       - SB_CONFIG_BOOTLOADER_MCUBOOT=y
 ```
 
-Both test configurations will be automatically discovered and built because they end with `.atm`.
+Both test configurations will be automatically discovered and built on all configured boards.
 
 ### Current Features
 
 The workflow currently includes:
 
 1. ✅ **Automatic Test Discovery**: Discovers all tests from `sample.yaml` and `testcase.yaml` files
-2. ✅ **Configurable Board Filters**: Each board can specify which test name suffixes to build
-3. ✅ **Multi-Board Support**: Builds tests on multiple board variants (ATM33 and ATM34)
-4. ✅ **Matrix Builds**: Builds multiple applications and tests in parallel
-5. ✅ **Programming Archives**: Creates `.atm` programming archives for easy device programming
-6. ✅ **GitHub Releases**: Automatically uploads `.atm` files to GitHub releases
-7. ✅ **Build Summaries**: Generates per-test build summaries with `.atm` file information
+2. ✅ **Multi-Board Support**: Builds tests on multiple board variants (ATM33 and ATM34)
+3. ✅ **Efficient Grouping**: Groups builds by application directory to minimize setup overhead
+4. ✅ **Programming Archives**: Creates `.atm` programming archives for easy device programming
+5. ✅ **Archive Bundling**: Bundles all `.atm` files per application into `.tar.gz` archives
+6. ✅ **GitHub Releases**: Automatically uploads archives to GitHub releases
+7. ✅ **Build Summaries**: Generates per-application build summaries with archive contents
 8. ✅ **Caching**: Caches SDK and west modules for faster builds
 9. ✅ **Fail-Fast Disabled**: Continues building other tests even if one fails
 

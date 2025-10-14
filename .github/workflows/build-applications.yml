@@ -37,23 +37,23 @@ jobs:
           import yaml
           import json
 
-          # Define boards to build for with their test suffixes
-          boards = {
+          # Define boards to build for
+          boards = [
               # ATM33 series boards
-              'ATMEVK-3330-QN-6//ns': ['.atm'],
-              'ATMEVK-3330e-QN-6//ns': ['.atm'],
-              'ATMEVK-3330e-QN-7//ns': ['.atm'],
-              'ATMEVK-3325-CM-6//ns': ['.atm'],
-              'ATMEVK-3325-QK-6//ns': ['.atm'],
-              'ATMEVK-3325-LQK-6//ns': ['.atm'],
+              'ATMEVK-3330-QN-6//ns',
+              'ATMEVK-3330e-QN-6//ns',
+              'ATMEVK-3330e-QN-7//ns',
+              'ATMEVK-3325-CM-6//ns',
+              'ATMEVK-3325-QK-6//ns',
+              'ATMEVK-3325-LQK-6//ns',
               # ATM34 series boards
-              'ATMEVK-3405-PQK-5//ns': ['.atm'],
-              'ATMEVK-3425-YQK-5//ns': ['.atm'],
-              'ATMEVK-3430e-YQN-5//ns': ['.atm'],
-              'ATMEVK-3405-YBV-5//ns': ['.atm'],
-              'ATMBTCSTAG-3405//ns': ['.atm'],
-              'ATMEVK-3405-WQK-5//ns': ['.atm']
-          }
+              'ATMEVK-3405-PQK-5//ns',
+              'ATMEVK-3425-YQK-5//ns',
+              'ATMEVK-3430e-YQN-5//ns',
+              'ATMEVK-3405-YBV-5//ns',
+              'ATMBTCSTAG-3405//ns',
+              'ATMEVK-3405-WQK-5//ns'
+          ]
 
           # Find all sample.yaml and testcase.yaml files and group by app_dir
           app_tests = {}  # app_dir -> list of (test_name, board) tuples
@@ -70,17 +70,14 @@ jobs:
                               data = yaml.safe_load(f)
                               if data and 'tests' in data:
                                   for test_name in data['tests'].keys():
-                                      # Check if test matches any board's suffixes
-                                      for board, suffixes in boards.items():
-                                          for suffix in suffixes:
-                                              if test_name.endswith(suffix):
-                                                  if app_dir not in app_tests:
-                                                      app_tests[app_dir] = []
-                                                  app_tests[app_dir].append({
-                                                      'test_name': test_name,
-                                                      'board': board
-                                                  })
-                                                  break  # Only add once per board
+                                      # Create entries for all boards
+                                      for board in boards:
+                                          if app_dir not in app_tests:
+                                              app_tests[app_dir] = []
+                                          app_tests[app_dir].append({
+                                              'test_name': test_name,
+                                              'board': board
+                                          })
                           except Exception as e:
                               print(f"Warning: Failed to parse {yaml_path}: {e}")
 
