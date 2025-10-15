@@ -40,7 +40,7 @@ jobs:
 
           # Discover boards from board.yml files under boards/atmosic
           boards = []
-          boards_dir = 'openair/boards/atmosic'
+          boards_dir = 'boards/atmosic'
 
           for board_subdir in os.listdir(boards_dir):
               # Exclude atmevk-02
