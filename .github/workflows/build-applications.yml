@@ -38,23 +38,33 @@ jobs:
           import yaml
           import json
 
-          # Define boards to build for
-          boards = [
-              # ATM33 series boards
-              'ATMEVK-3330-QN-6//ns',
-              'ATMEVK-3330e-QN-6//ns',
-              'ATMEVK-3330e-QN-7//ns',
-              'ATMEVK-3325-CM-6//ns',
-              'ATMEVK-3325-QK-6//ns',
-              'ATMEVK-3325-LQK-6//ns',
-              # ATM34 series boards
-              'ATMEVK-3405-PQK-5//ns',
-              'ATMEVK-3425-YQK-5//ns',
-              'ATMEVK-3430e-YQN-5//ns',
-              'ATMEVK-3405-YBV-5//ns',
-              'ATMBTCSTAG-3405//ns',
-              'ATMEVK-3405-WQK-5//ns'
-          ]
+          # Discover boards from board.yml files under boards/atmosic
+          boards = []
+          boards_dir = 'openair/boards/atmosic'
+
+          for board_subdir in os.listdir(boards_dir):
+              # Exclude atmevk-02
+              if board_subdir == 'atmevk-02':
+                  continue
+
+              board_yml_path = os.path.join(boards_dir, board_subdir, 'board.yml')
+              if os.path.isfile(board_yml_path):
+                  with open(board_yml_path, 'r') as f:
+                      try:
+                          board_data = yaml.safe_load(f)
+                          if board_data and 'boards' in board_data:
+                              for board_entry in board_data['boards']:
+                                  board_name = board_entry.get('name')
+                                  if board_name:
+                                      # For now, hard-code the //ns variant
+                                      boards.append(f"{board_name}//ns")
+                      except Exception as e:
+                          print(f"Warning: Failed to parse {board_yml_path}: {e}")
+
+          boards.sort()
+          print(f"Discovered {len(boards)} boards:")
+          for board in boards:
+              print(f"  - {board}")
 
           # Find all sample.yaml and testcase.yaml files and group by app_dir
           app_tests = {}  # app_dir -> list of (test_name, board) tuples

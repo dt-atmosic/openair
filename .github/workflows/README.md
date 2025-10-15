@@ -27,22 +27,11 @@ This means you don't need to manually update the workflow when adding new applic
 ### Current Configuration
 
 - **Runner**: Ubuntu 22.04
-- **Boards** (12 total):
-  - **ATM33 series** (6 boards):
-    - `ATMEVK-3330-QN-6//ns`
-    - `ATMEVK-3330e-QN-6//ns`
-    - `ATMEVK-3330e-QN-7//ns`
-    - `ATMEVK-3325-CM-6//ns`
-    - `ATMEVK-3325-QK-6//ns`
-    - `ATMEVK-3325-LQK-6//ns`
-  - **ATM34 series** (6 boards):
-    - `ATMEVK-3405-PQK-5//ns`
-    - `ATMEVK-3425-YQK-5//ns`
-    - `ATMEVK-3430e-YQN-5//ns`
-    - `ATMEVK-3405-YBV-5//ns`
-    - `ATMBTCSTAG-3405//ns`
-    - `ATMEVK-3405-WQK-5//ns`
-- **Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
+- **Board Discovery**: Automatically discovers boards from `board.yml` files under `boards/atmosic/`
+  - Excludes `atmevk-02` directory
+  - Uses `//ns` variant for all boards
+  - Discovers both ATM33 and ATM34 series boards
+- **Test Discovery**: Automatic from `sample.yaml` and `testcase.yaml` files
 - **Build Options**: Creates `.atm` programming archives with `-DSB_CONFIG_ATM_ARCH=y -DSB_CONFIG_ATM_ARCH_ERASE_ALL=y`
 - **Output**: Archives of `.atm` files are uploaded to GitHub releases
 
@@ -60,9 +49,9 @@ This job discovers all applications and their test configurations:
 
 1. **Checkout repository**: Gets the source code
 2. **Install PyYAML**: Installs Python YAML parser
-3. **Discover and group**: Runs Python script to:
-   - Walk through all directories
-   - Find `sample.yaml` and `testcase.yaml` files
+3. **Discover boards and tests**: Runs Python script to:
+   - Discover boards from `board.yml` files under `boards/atmosic/` (excluding `atmevk-02`)
+   - Walk through all directories to find `sample.yaml` and `testcase.yaml` files
    - Parse the `tests:` section from each file
    - **Group by `app_dir`**: Creates one matrix entry per application directory
    - Each entry contains all board/test combinations for that application
@@ -132,24 +121,16 @@ tests:
 
 ### Adding New Boards
 
-To add a new board to the build matrix:
+Boards are automatically discovered from `board.yml` files under `boards/atmosic/`. To add a new board:
 
-1. Edit `.github/workflows/build-applications.yml`
-2. Add the board to the `boards` list:
+1. Create a new board directory under `boards/atmosic/` (e.g., `boards/atmosic/atm35evk/`)
+2. Add a `board.yml` file with the board definition following the Zephyr board format
+3. Commit and push - the workflow will automatically discover and build all tests on the new board
 
-```python
-boards = [
-    # ATM33 series boards
-    'ATMEVK-3330-QN-6//ns',
-    'ATMEVK-3330e-QN-6//ns',
-    # ... other boards ...
-    'NEW-BOARD-NAME//ns',  # Add your new board here
-]
-```
-
-3. Commit and push - all discovered tests will be built on the new board
-
-**Note**: The current configuration builds all discovered tests on all 12 boards (6 ATM33 + 6 ATM34) with the `//ns` variant.
+**Note**:
+- The workflow currently uses the `//ns` variant for all boards (hard-coded)
+- The `atmevk-02` directory is excluded from board discovery
+- All discovered boards will build all discovered tests
 
 ### Example Test Definition
 
